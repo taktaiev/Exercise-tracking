@@ -23,19 +23,14 @@ jobs:
         with:
           python-version: "3.12"
 
-          - name: Debug secrets
+     - name: Debug
         env:
           GIST_ID: ${{ secrets.GIST_ID }}
+          DATA_GITHUB_TOKEN: ${{ secrets.DATA_GITHUB_TOKEN }}
         run: |
-          echo "Gist ID length: ${#GIST_ID}"
-          curl -s -o /dev/null -w "%{http_code}" https://api.github.com/gists/$GIST_ID
-
-      - name: Process health data
-        env:
-          GIST_ID:       ${{ secrets.GIST_ID }}
-          GITHUB_TOKEN:  ${{ secrets.DATA_GITHUB_TOKEN }}   # separate PAT with gist:read
-          SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
-        run: python process_health.py
+          echo "GIST_ID length: ${#GIST_ID}"
+          echo "TOKEN length: ${#DATA_GITHUB_TOKEN}"
+          curl -s -w "\nHTTP_CODE:%{http_code}" -H "Authorization: token $DATA_GITHUB_TOKEN" https://api.github.com/gists/$GIST_ID
 
       - name: Copy dashboard files to deploy folder
         run: |
