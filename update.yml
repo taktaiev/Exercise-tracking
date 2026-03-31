@@ -26,7 +26,7 @@ jobs:
      - name: Debug
         env:
           GIST_ID: ${{ secrets.GIST_ID }}
-          DATA_GITHUB_TOKEN: ${{ secrets.DATA_GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.DATA_GITHUB_TOKEN }}
         run: |
           echo "GIST_ID length: ${#GIST_ID}"
           echo "TOKEN length: ${#DATA_GITHUB_TOKEN}"
