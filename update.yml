@@ -23,6 +23,13 @@ jobs:
         with:
           python-version: "3.12"
 
+          - name: Debug secrets
+        env:
+          GIST_ID: ${{ secrets.GIST_ID }}
+        run: |
+          echo "Gist ID length: ${#GIST_ID}"
+          curl -s -o /dev/null -w "%{http_code}" https://api.github.com/gists/$GIST_ID
+
       - name: Process health data
         env:
           GIST_ID:       ${{ secrets.GIST_ID }}
