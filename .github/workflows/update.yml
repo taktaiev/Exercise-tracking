@@ -22,12 +22,8 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
+          
       - name: Process health data
-        env:
-          GIST_ID:       ${{ secrets.GIST_ID }}
-          GITHUB_TOKEN:  ${{ secrets.DATA_GITHUB_TOKEN }}   # separate PAT with gist:read
-          SHEET_CSV_URL: ${{ secrets.SHEET_CSV_URL }}
         run: python process_health.py
 
       - name: Copy dashboard files to deploy folder
