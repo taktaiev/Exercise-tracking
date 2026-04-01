@@ -24,6 +24,8 @@ jobs:
           python-version: "3.12"
           
       - name: Process health data
+        env:
+          GIST_RAW_URL: "https://gist.githubusercontent.com/taktaiev/6691552dd387ce2e525723719d74f6e3/raw/workouts.json"
         run: python process_health.py
 
       - name: Copy dashboard files to deploy folder
