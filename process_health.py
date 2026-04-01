@@ -1,29 +1,20 @@
 """
-process_health.py
-Fetches workout data from a GitHub Gist (posted by iOS Shortcut),
-merges with Google Sheets overrides, and writes data.json for the dashboard.
+process_health.py — fetch workouts from GitHub Gist, merge overrides, write data.json
 """
-
-import json
-import os
-import urllib.request
-import urllib.parse
+import json, os, urllib.request
 from datetime import date, timedelta, datetime
 
-# ── Config (set these as GitHub Actions secrets / env vars) ──────────────────
-GIST_ID        = os.environ["GIST_ID"]          # GitHub Gist ID
-GITHUB_TOKEN   = os.environ["GITHUB_TOKEN"]     # GitHub personal access token
-SHEET_CSV_URL  = os.environ.get("SHEET_CSV_URL", "")  # Google Sheet published CSV URL
+# ── Secrets (set in GitHub repo → Settings → Secrets → Actions) ─────────────
+GIST_ID   = os.environ.get("GIST_ID", "")
+PAT       = os.environ.get("DATA_GITHUB_TOKEN", "")
+SHEET_URL = os.environ.get("SHEET_CSV_URL", "")
 
-REAL_WORKOUT_TYPES = {
+REAL_TYPES = {
     "Running", "TraditionalStrengthTraining", "FunctionalStrengthTraining",
-    "HighIntensityIntervalTraining", "Yoga", "Pilates",
-    "CrossTraining", "MixedCardio",
+    "HighIntensityIntervalTraining", "Yoga", "Pilates", "CrossTraining", "MixedCardio",
 }
-
-WALKING_TYPES = {"Walking", "WalkingSpeed", "WalkingStepLength"}
-
-DISPLAY_NAMES = {
+WALK_TYPES = {"Walking", "WalkingSpeed", "WalkingStepLength"}
+DISPLAY = {
     "Running": "Running",
     "TraditionalStrengthTraining": "Strength",
     "FunctionalStrengthTraining": "Strength",
@@ -35,209 +26,149 @@ DISPLAY_NAMES = {
     "Walking": "Walking",
 }
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
-
-def fetch_gist(gist_id: str, token: str) -> list[dict]:
-    url = f"https://api.github.com/gists/{gist_id}"
+def fetch_gist():
+    print(f"GIST_ID  length: {len(GIST_ID)}")
+    print(f"PAT      length: {len(PAT)}")
+    if not GIST_ID:
+        raise ValueError("GIST_ID secret is empty or not set")
+    if not PAT:
+        raise ValueError("DATA_GITHUB_TOKEN secret is empty or not set")
+    url = f"https://api.github.com/gists/{GIST_ID}"
     req = urllib.request.Request(url, headers={
-        "Authorization": f"token {token}",
+        "Authorization": f"token {PAT}",
         "Accept": "application/vnd.github+json",
     })
-    with urllib.request.urlopen(req) as r:
-        gist = json.loads(r.read())
-    # Expect a single file called workouts.json
-    file_content = list(gist["files"].values())[0]["content"]
-    return json.loads(file_content)
+    try:
+        with urllib.request.urlopen(req) as r:
+            gist = json.loads(r.read())
+    except urllib.error.HTTPError as e:
+        raise RuntimeError(f"GitHub API returned {e.code} for gist {GIST_ID}. "
+                           f"Check GIST_ID and DATA_GITHUB_TOKEN are correct.") from e
+    files = gist.get("files", {})
+    print(f"Gist files: {list(files.keys())}")
+    for fname, fdata in files.items():
+        if fname.endswith(".json") or fname == "workouts.json":
+            return json.loads(fdata["content"])
+    first = list(files.values())[0]
+    return json.loads(first["content"])
 
-
-def fetch_sheet_overrides(csv_url: str) -> dict[str, dict]:
-    """
-    Google Sheet columns (row 1 = headers):
-      date (YYYY-MM-DD) | exercise_done | workout_type | calories | minutes | notes
-    Returns dict keyed by date string.
-    """
-    if not csv_url:
+def fetch_overrides():
+    if not SHEET_URL:
         return {}
-    req = urllib.request.Request(csv_url)
+    req = urllib.request.Request(SHEET_URL)
     with urllib.request.urlopen(req) as r:
         lines = r.read().decode("utf-8").splitlines()
-    overrides = {}
     if len(lines) < 2:
         return {}
     headers = [h.strip().lower() for h in lines[0].split(",")]
+    overrides = {}
     for line in lines[1:]:
         parts = line.split(",")
-        row = {headers[i]: parts[i].strip() if i < len(parts) else "" for i in range(len(headers))}
+        row = {headers[i]: (parts[i].strip() if i < len(parts) else "") for i in range(len(headers))}
         if row.get("date"):
             overrides[row["date"]] = row
     return overrides
 
-
-def classify(workout_type: str) -> str:
-    if workout_type in REAL_WORKOUT_TYPES:
-        return "real"
-    if workout_type in WALKING_TYPES:
-        return "walk"
-    return "other"
-
-
-def build_day_record(day_str: str, workouts: list[dict], overrides: dict) -> dict:
+def build_day(day_str, workouts, overrides):
     d = date.fromisoformat(day_str)
-    is_sunday = d.weekday() == 6  # Monday=0, Sunday=6
-
-    # Aggregate from Apple Health
+    is_sunday = d.weekday() == 6
     total_cals = round(sum(w.get("calories", 0) for w in workouts))
     total_mins = round(sum(w.get("duration_minutes", 0) for w in workouts))
-
-    # Determine best workout type
-    types_today = [w.get("workout_type", "") for w in workouts]
-    real_today  = [t for t in types_today if t in REAL_WORKOUT_TYPES]
-    walk_today  = [t for t in types_today if t in WALKING_TYPES]
-
-    if real_today:
-        primary_type = real_today[0]
-        exercise_class = "real"
-    elif walk_today:
-        primary_type = "Walking"
-        exercise_class = "walk"
+    types = [w.get("workout_type", "") for w in workouts]
+    real = [t for t in types if t in REAL_TYPES]
+    walk = [t for t in types if t in WALK_TYPES]
+    if real:
+        primary, cls = real[0], "real"
+    elif walk:
+        primary, cls = "Walking", "walk"
     else:
-        primary_type = None
-        exercise_class = "rest"
-
-    record = {
-        "date":           day_str,
-        "is_sunday":      is_sunday,
-        "exercise_done":  exercise_class in ("real", "walk"),
-        "exercise_class": "off" if is_sunday else exercise_class,
-        "workout_type":   DISPLAY_NAMES.get(primary_type, primary_type) if primary_type else None,
-        "is_real":        exercise_class == "real",
-        "calories":       total_cals,
-        "minutes":        total_mins,
-        "notes":          None,
-        "overridden":     False,
+        primary, cls = None, "rest"
+    rec = {
+        "date": day_str, "is_sunday": is_sunday,
+        "exercise_done": cls in ("real", "walk"),
+        "exercise_class": "off" if is_sunday else cls,
+        "workout_type": DISPLAY.get(primary, primary) if primary else None,
+        "is_real": cls == "real",
+        "calories": total_cals, "minutes": total_mins,
+        "notes": None, "overridden": False,
+        "streak": 0, "is_streak_record": False,
+        "is_calorie_record": False, "is_duration_record": False,
     }
-
-    # Apply Google Sheets override if present
     ov = overrides.get(day_str)
     if ov:
-        record["overridden"] = True
+        rec["overridden"] = True
         if ov.get("exercise_done"):
-            record["exercise_done"] = ov["exercise_done"].lower() in ("yes", "true", "1")
+            rec["exercise_done"] = ov["exercise_done"].lower() in ("yes","true","1")
         if ov.get("workout_type"):
-            record["workout_type"] = ov["workout_type"]
-            record["is_real"] = ov["workout_type"].lower() not in ("walking", "walk", "")
-            record["exercise_class"] = "real" if record["is_real"] else "walk"
-        if ov.get("calories"):
-            try:
-                record["calories"] = int(float(ov["calories"]))
-            except ValueError:
-                pass
-        if ov.get("minutes"):
-            try:
-                record["minutes"] = int(float(ov["minutes"]))
-            except ValueError:
-                pass
-        if ov.get("notes"):
-            record["notes"] = ov["notes"]
+            rec["workout_type"] = ov["workout_type"]
+            rec["is_real"] = ov["workout_type"].lower() not in ("walking","walk","")
+            rec["exercise_class"] = "real" if rec["is_real"] else "walk"
+        for field in ("calories","minutes"):
+            if ov.get(field):
+                try: rec[field] = int(float(ov[field]))
+                except ValueError: pass
+        if ov.get("notes"): rec["notes"] = ov["notes"]
+    return rec
 
-    return record
-
-
-def compute_streaks(days: list[dict]) -> list[dict]:
-    """Tag each day with current streak length and whether it's a personal record."""
-    streak = 0
-    max_streak = 0
+def add_streaks(days):
+    streak = max_streak = 0
     for d in days:
-        if d["is_sunday"]:
-            # Sunday doesn't break or count towards streak
-            d["streak"] = streak
-            continue
-        if d["exercise_done"]:
-            streak += 1
-        else:
-            streak = 0
+        if not d["is_sunday"]:
+            streak = streak + 1 if d["exercise_done"] else 0
         d["streak"] = streak
-        if streak > max_streak:
-            max_streak = streak
-    # Tag streak record days
+        max_streak = max(max_streak, streak)
     for d in days:
-        d["is_streak_record"] = d.get("streak", 0) == max_streak and max_streak > 1
+        d["is_streak_record"] = d["streak"] == max_streak and max_streak > 1
     return days
 
-
-def compute_records(days: list[dict]) -> list[dict]:
-    """Tag days with calorie or duration records."""
-    max_cals = 0
-    max_mins = 0
-    cal_record_date = None
-    min_record_date = None
+def add_records(days):
+    max_c = max_m = 0
+    rc = rm = None
     for d in days:
-        if d["calories"] > max_cals:
-            max_cals = d["calories"]
-            cal_record_date = d["date"]
-        if d["minutes"] > max_mins:
-            max_mins = d["minutes"]
-            min_record_date = d["date"]
+        if d["calories"] > max_c: max_c, rc = d["calories"], d["date"]
+        if d["minutes"] > max_m: max_m, rm = d["minutes"], d["date"]
     for d in days:
-        d["is_calorie_record"] = d["date"] == cal_record_date
-        d["is_duration_record"] = d["date"] == min_record_date
+        d["is_calorie_record"]  = d["date"] == rc
+        d["is_duration_record"] = d["date"] == rm
     return days
-
-
-# ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    print("Fetching workouts from Gist…")
-    raw_workouts = fetch_gist(GIST_ID, GITHUB_TOKEN)
-
-    # Group workouts by date
-    by_date: dict[str, list] = {}
-    for w in raw_workouts:
-        day = w.get("date", "")[:10]  # YYYY-MM-DD
+    print("Fetching workouts from Gist...")
+    raw = fetch_gist()
+    by_date = {}
+    for w in raw:
+        day = w.get("date","")[:10]
         by_date.setdefault(day, []).append(w)
 
-    print("Fetching Google Sheets overrides…")
-    overrides = fetch_sheet_overrides(SHEET_CSV_URL)
+    print("Fetching overrides...")
+    overrides = fetch_overrides()
 
-    # Build full year of records
     today = date.today()
-    start = today - timedelta(days=364)
     days = []
     for i in range(365):
-        day = start + timedelta(days=i)
-        day_str = day.isoformat()
-        workouts_today = by_date.get(day_str, [])
-        days.append(build_day_record(day_str, workouts_today, overrides))
+        ds = (today - timedelta(days=364-i)).isoformat()
+        days.append(build_day(ds, by_date.get(ds, []), overrides))
 
-    days = compute_streaks(days)
-    days = compute_records(days)
+    days = add_streaks(days)
+    days = add_records(days)
 
-    # Summary stats
-    active_days   = [d for d in days if d["exercise_done"] and not d["is_sunday"]]
-    real_days     = [d for d in days if d["is_real"]]
-    current_streak = days[-1]["streak"] if days else 0
-    best_streak    = max((d.get("streak", 0) for d in days), default=0)
-    avg_calories   = round(sum(d["calories"] for d in active_days) / max(len(active_days), 1))
-    avg_minutes    = round(sum(d["minutes"] for d in active_days) / max(len(active_days), 1))
-
-    output = {
+    active = [d for d in days if d["exercise_done"] and not d["is_sunday"]]
+    real   = [d for d in days if d["is_real"]]
+    out = {
         "generated_at": datetime.utcnow().isoformat() + "Z",
         "summary": {
-            "active_days":     len(active_days),
-            "real_workouts":   len(real_days),
-            "current_streak":  current_streak,
-            "best_streak":     best_streak,
-            "avg_calories":    avg_calories,
-            "avg_minutes":     avg_minutes,
+            "active_days":    len(active),
+            "real_workouts":  len(real),
+            "current_streak": days[-1]["streak"],
+            "best_streak":    max(d["streak"] for d in days),
+            "avg_calories":   round(sum(d["calories"] for d in active) / max(len(active),1)),
+            "avg_minutes":    round(sum(d["minutes"]  for d in active) / max(len(active),1)),
         },
         "days": days,
     }
-
-    with open("data.json", "w") as f:
-        json.dump(output, f, indent=2)
-
-    print(f"Done. {len(days)} days written. Current streak: {current_streak}.")
-
+    with open("data.json","w") as f:
+        json.dump(out, f, indent=2)
+    print(f"Done. {len(days)} days. Streak: {out['summary']['current_streak']}.")
 
 if __name__ == "__main__":
     main()
