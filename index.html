@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Fitness Dashboard</title>
+<style>
+  :root {
+    --bg:        #f8f7f4;
+    --surface:   #ffffff;
+    --border:    rgba(0,0,0,0.09);
+    --text:      #1a1a18;
+    --muted:     #6b6b67;
+    --faint:     #a8a8a4;
+
+    --c-real:    #1D9E75;
+    --c-walk:    #97C459;
+    --c-off:     #B5D4F4;
+    --c-rest:    #e8e6df;
+    --c-record:  #BA7517;
+    --c-streak:  #EF9F27;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:      #1a1a18;
+      --surface: #252523;
+      --border:  rgba(255,255,255,0.1);
+      --text:    #f0ede6;
+      --muted:   #9a9a96;
+      --faint:   #5a5a58;
+      --c-rest:  #2e2e2c;
+    }
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 15px; line-height: 1.5; }
+
+  /* ── Layout ── */
+  .page { max-width: 900px; margin: 0 auto; padding: 2rem 1.25rem 4rem; }
+  h1 { font-size: 22px; font-weight: 500; margin-bottom: 0.25rem; }
+  .updated { font-size: 12px; color: var(--faint); margin-bottom: 2rem; }
+
+  /* ── Stats row ── */
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; margin-bottom: 2rem; }
+  .stat { background: var(--surface); border: 0.5px solid var(--border); border-radius: 10px; padding: 1rem; }
+  .stat-label { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px; }
+  .stat-value { font-size: 26px; font-weight: 500; }
+  .stat-sub { font-size: 11px; color: var(--faint); margin-top: 2px; }
+
+  /* ── Streak banner ── */
+  .streak-banner { border-left: 3px solid var(--c-streak); background: var(--surface); border-radius: 0 10px 10px 0; padding: .8rem 1.1rem; margin-bottom: 2rem; display: flex; align-items: center; gap: 14px; }
+  .streak-big { font-size: 32px; font-weight: 500; color: var(--c-record); }
+  .streak-info { font-size: 13px; color: var(--muted); line-height: 1.6; }
+
+  /* ── Section headings ── */
+  .section { margin-bottom: 2rem; }
+  .section-title { font-size: 11px; font-weight: 500; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 10px; }
+
+  /* ── Calendar heatmap ── */
+  .cal-wrap { overflow-x: auto; }
+  .cal-grid { display: grid; grid-template-columns: repeat(53, 14px); grid-template-rows: repeat(7, 14px); gap: 3px; width: max-content; }
+  .cal-cell { width: 14px; height: 14px; border-radius: 3px; cursor: default; transition: transform .1s; }
+  .cal-cell:hover { transform: scale(1.4); z-index: 1; }
+  .c-real   { background: var(--c-real); }
+  .c-walk   { background: var(--c-walk); }
+  .c-off    { background: var(--c-off); }
+  .c-rest   { background: var(--c-rest); }
+  .c-record { outline: 2px solid var(--c-record); outline-offset: 1px; }
+  .c-future { background: transparent; }
+
+  /* ── Legend ── */
+  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 10px; }
+  .leg { display: flex; align-items: center; gap: 5px; font-size: 12px; color: var(--muted); }
+  .leg-sq { width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0; }
+
+  /* ── Recent sessions ── */
+  .session-list { display: flex; flex-direction: column; gap: 6px; }
+  .session { display: flex; align-items: center; gap: 10px; padding: 9px 12px; background: var(--surface); border: 0.5px solid var(--border); border-radius: 10px; font-size: 13px; }
+  .session-date { color: var(--muted); min-width: 72px; }
+  .tag { font-size: 10px; font-weight: 500; padding: 2px 8px; border-radius: 20px; }
+  .tag-Running        { background: #E1F5EE; color: #0F6E56; }
+  .tag-Strength       { background: #FAECE7; color: #993C1D; }
+  .tag-HIIT           { background: #FBEAF0; color: #993556; }
+  .tag-Yoga           { background: #EEEDFE; color: #3C3489; }
+  .tag-Walking        { background: #EAF3DE; color: #3B6D11; }
+  .tag-default        { background: #F1EFE8; color: #5F5E5A; }
+  .pr-badge { font-size: 9px; background: #FAEEDA; color: #854F0B; padding: 1px 5px; border-radius: 3px; font-weight: 500; }
+  .ov-badge { font-size: 9px; background: #E6F1FB; color: #185FA5; padding: 1px 5px; border-radius: 3px; font-weight: 500; }
+  .session-cals { margin-left: auto; color: var(--muted); }
+  .session-mins { color: var(--faint); margin-left: 8px; }
+
+  /* ── Tooltip ── */
+  #tooltip { position: fixed; background: var(--surface); border: 0.5px solid var(--border); border-radius: 8px; padding: 7px 10px; font-size: 12px; color: var(--text); pointer-events: none; display: none; max-width: 180px; line-height: 1.6; box-shadow: 0 2px 8px rgba(0,0,0,.12); z-index: 999; }
+
+  /* ── Responsive ── */
+  @media (max-width: 600px) {
+    .cal-grid { grid-template-columns: repeat(53, 11px); grid-template-rows: repeat(7, 11px); gap: 2px; }
+    .cal-cell { width: 11px; height: 11px; }
+  }
+</style>
+</head>
+<body>
+<div class="page">
+  <h1>Fitness Dashboard</h1>
+  <p class="updated" id="updated">Loading…</p>
+
+  <div class="stats" id="stats"></div>
+  <div class="streak-banner" id="streak-banner"></div>
+
+  <div class="section">
+    <div class="section-title">Year at a glance</div>
+    <div class="cal-wrap"><div class="cal-grid" id="cal"></div></div>
+    <div class="legend">
+      <div class="leg"><div class="leg-sq" style="background:var(--c-real)"></div>Real workout</div>
+      <div class="leg"><div class="leg-sq" style="background:var(--c-walk)"></div>Walking only</div>
+      <div class="leg"><div class="leg-sq" style="background:var(--c-off)"></div>Sunday (day off)</div>
+      <div class="leg"><div class="leg-sq" style="background:var(--c-rest)"></div>Rest</div>
+      <div class="leg"><div class="leg-sq" style="background:var(--c-walk); outline:2px solid var(--c-record); outline-offset:1px;"></div>Personal record</div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Recent sessions</div>
+    <div class="session-list" id="sessions"></div>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+const tt = document.getElementById('tooltip');
+
+function showTT(e, html) {
+  tt.innerHTML = html;
+  tt.style.display = 'block';
+  moveTT(e);
+}
+function moveTT(e) {
+  const x = e.clientX + 12, y = e.clientY - 10;
+  tt.style.left = Math.min(x, window.innerWidth - 200) + 'px';
+  tt.style.top  = Math.min(y, window.innerHeight - 100) + 'px';
+}
+function hideTT() { tt.style.display = 'none'; }
+
+function fmt(d) {
+  const date = new Date(d + 'T00:00:00');
+  return date.toLocaleDateString('en-GB', { weekday:'short', day:'numeric', month:'short' });
+}
+function relDay(d) {
+  const today = new Date(); today.setHours(0,0,0,0);
+  const dd = new Date(d + 'T00:00:00');
+  const diff = Math.round((today - dd) / 86400000);
+  if (diff === 0) return 'Today';
+  if (diff === 1) return 'Yesterday';
+  return fmt(d);
+}
+function tagClass(type) {
+  const t = (type||'').split('/')[0].trim();
+  return ['Running','Strength','HIIT','Yoga','Walking'].includes(t) ? 'tag-'+t : 'tag-default';
+}
+
+fetch('data.json')
+  .then(r => r.json())
+  .then(data => {
+    const s = data.summary;
+    const days = data.days;
+
+    // Updated
+    document.getElementById('updated').textContent =
+      'Updated ' + new Date(data.generated_at).toLocaleString('en-GB', {day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+
+    // Stats
+    const statsEl = document.getElementById('stats');
+    const metrics = [
+      { label:'Active days',    value: s.active_days,    sub: 'of last 365' },
+      { label:'Current streak', value: s.current_streak, sub: 'days in a row' },
+      { label:'Best streak',    value: s.best_streak,    sub: 'days ever' },
+      { label:'Real workouts',  value: s.real_workouts,  sub: 'non-walking' },
+      { label:'Avg calories',   value: s.avg_calories,   sub: 'kcal / session' },
+      { label:'Avg duration',   value: s.avg_minutes,    sub: 'min / session' },
+    ];
+    statsEl.innerHTML = metrics.map(m => `
+      <div class="stat">
+        <div class="stat-label">${m.label}</div>
+        <div class="stat-value">${m.value}</div>
+        <div class="stat-sub">${m.sub}</div>
+      </div>`).join('');
+
+    // Streak banner
+    document.getElementById('streak-banner').innerHTML = `
+      <div class="streak-big">${s.current_streak}</div>
+      <div class="streak-info">
+        day streak — keep going!<br>
+        <span style="font-size:11px">Best ever: <strong>${s.best_streak}</strong> days</span>
+      </div>`;
+
+    // Calendar — GitHub-style columns = weeks, rows = days of week Mon-Sun
+    const calEl = document.getElementById('cal');
+    // Build a map for fast lookup
+    const dayMap = {};
+    days.forEach(d => dayMap[d.date] = d);
+
+    // Find the Monday of the week containing days[0]
+    const firstDate = new Date(days[0].date + 'T00:00:00');
+    const dow = (firstDate.getDay() + 6) % 7; // Mon=0
+    const gridStart = new Date(firstDate);
+    gridStart.setDate(gridStart.getDate() - dow);
+
+    const today = new Date(); today.setHours(0,0,0,0);
+    const cells = 53 * 7;
+
+    for (let i = 0; i < cells; i++) {
+      const col = Math.floor(i / 7);
+      const row = i % 7;
+      const cellDate = new Date(gridStart);
+      cellDate.setDate(gridStart.getDate() + col * 7 + row);
+      const ds = cellDate.toISOString().slice(0, 10);
+      const d = dayMap[ds];
+
+      const cell = document.createElement('div');
+      cell.className = 'cal-cell';
+
+      if (cellDate > today) {
+        cell.className += ' c-future';
+      } else if (!d) {
+        cell.className += ' c-rest';
+      } else if (d.is_sunday) {
+        cell.className += ' c-off';
+      } else if (d.exercise_class === 'real') {
+        cell.className += ' c-real';
+      } else if (d.exercise_class === 'walk') {
+        cell.className += ' c-walk';
+      } else {
+        cell.className += ' c-rest';
+      }
+
+      if (d && (d.is_calorie_record || d.is_duration_record)) {
+        cell.className += ' c-record';
+      }
+
+      // Tooltip
+      if (d) {
+        cell.addEventListener('mouseenter', e => {
+          let html = `<strong>${fmt(ds)}</strong><br>`;
+          if (d.is_sunday) {
+            html += 'Sunday — day off';
+          } else if (d.exercise_done) {
+            html += `${d.workout_type || 'Workout'}<br>`;
+            if (d.calories) html += `${d.calories} kcal &nbsp; ${d.minutes} min<br>`;
+            if (d.is_calorie_record) html += '<span style="color:#BA7517">🏅 Calorie record</span><br>';
+            if (d.is_duration_record) html += '<span style="color:#BA7517">🏅 Duration record</span><br>';
+            if (d.streak > 1) html += `${d.streak}-day streak`;
+          } else {
+            html += 'Rest day';
+          }
+          if (d.notes) html += `<br><em>${d.notes}</em>`;
+          if (d.overridden) html += '<br><span style="color:#378ADD">✎ edited</span>';
+          showTT(e, html);
+        });
+        cell.addEventListener('mousemove', moveTT);
+        cell.addEventListener('mouseleave', hideTT);
+      }
+
+      calEl.appendChild(cell);
+    }
+
+    // Recent sessions — last 20 active days
+    const sessionsEl = document.getElementById('sessions');
+    const recent = [...days].reverse().filter(d => d.exercise_done).slice(0, 20);
+    sessionsEl.innerHTML = recent.map(d => `
+      <div class="session">
+        <span class="session-date">${relDay(d.date)}</span>
+        <span class="tag ${tagClass(d.workout_type)}">${d.workout_type || 'Workout'}</span>
+        ${d.is_calorie_record || d.is_duration_record ? '<span class="pr-badge">PR</span>' : ''}
+        ${d.overridden ? '<span class="ov-badge">edited</span>' : ''}
+        <span class="session-cals">${d.calories ? d.calories + ' kcal' : ''}</span>
+        <span class="session-mins">${d.minutes ? d.minutes + ' min' : ''}</span>
+      </div>`).join('');
+  })
+  .catch(() => {
+    document.getElementById('updated').textContent = 'Could not load data.json';
+  });
+</script>
+</body>
+</html>
